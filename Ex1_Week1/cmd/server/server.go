@@ -17,11 +17,19 @@ const (
 )
 
 var (
-	clients    = make(map[net.Conn]string)
-	addr       = make(map[net.Conn]string)
-	mutex      sync.Mutex
-	historyLog = "history.log"
+	clients       = make(map[net.Conn]string)
+	addr          = make(map[net.Conn]string)
+	mutex         sync.Mutex
+	historyLog    = "history.log"
+	tasks         = make(map[string]Task)
+	taskIDCounter int
 )
+
+type Task struct {
+	ID          string
+	Description string
+	Owner       string
+}
 
 func handleConnection(conn net.Conn) {
 	nickname := "Anonymous"
@@ -73,6 +81,18 @@ func handleCommands(conn net.Conn, nickname *string, message string, logFile *os
 		}
 	} else if strings.HasPrefix(message, "/users") {
 		sendUsersList(conn)
+	} else if strings.HasPrefix(message, "/task add") {
+		parts := strings.SplitN(message, " ", 3)
+		if len(parts) == 3 {
+			addTask(conn, *nickname, parts[2])
+		}
+	} else if strings.HasPrefix(message, "/task list") {
+		listTasks(conn)
+	} else if strings.HasPrefix(message, "/task delete") {
+		parts := strings.SplitN(message, " ", 3)
+		if len(parts) == 3 {
+			deleteTask(conn, parts[2])
+		}
 	} else {
 		logMessage(*nickname, message, logFile)
 		response := fmt.Sprintf("%s: %s\n", *nickname, message)
@@ -146,6 +166,45 @@ func broadcastMessage(message string, sender net.Conn) {
 		if conn != sender {
 			conn.Write([]byte(message))
 		}
+	}
+}
+
+func addTask(conn net.Conn, owner, description string) {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	taskIDCounter++
+	taskID := fmt.Sprintf("%d", taskIDCounter)
+	tasks[taskID] = Task{ID: taskID, Description: description, Owner: owner}
+
+	conn.Write([]byte(fmt.Sprintf("Task added with ID %s\n", taskID)))
+}
+
+func listTasks(conn net.Conn) {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	var taskDescriptions []string
+	for _, task := range tasks {
+		taskDescriptions = append(taskDescriptions, fmt.Sprintf("ID: %s, Owner: %s, Description: %s", task.ID, task.Owner, task.Description))
+	}
+
+	if len(taskDescriptions) == 0 {
+		conn.Write([]byte("No tasks found.\n"))
+	} else {
+		conn.Write([]byte(strings.Join(taskDescriptions, "; ") + "\n"))
+	}
+}
+
+func deleteTask(conn net.Conn, taskID string) {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if _, ok := tasks[taskID]; ok {
+		delete(tasks, taskID)
+		conn.Write([]byte("Task deleted successfully.\n"))
+	} else {
+		conn.Write([]byte("Task not found.\n"))
 	}
 }
 
